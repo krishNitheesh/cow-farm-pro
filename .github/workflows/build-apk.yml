@@ -30,16 +30,15 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: |
-          cd frontend
           npm ci
 
       - name: Build Android App (Gradle Release Assembly)
         run: |
-          cd frontend/android
+          cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-build-cache
 
@@ -47,4 +46,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cow-farm-pro-release-apk
-          path: frontend/android/app/build/outputs/apk/release/app-release.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
