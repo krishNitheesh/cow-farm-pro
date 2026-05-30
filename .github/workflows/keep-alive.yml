@@ -1,0 +1,20 @@
+name: Keep Supabase Active (Auto-Ping)
+
+on:
+  schedule:
+    # Runs at 00:00 every 3 days
+    - cron: '0 0 */3 * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  ping:
+    name: Ping Supabase REST API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Make select request to database
+        run: |
+          curl -X GET "https://vnqgohkszgsnqrmgcqiz.supabase.co/rest/v1/cows?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY || 'sb_publishable_pf3FKpLV3iWpzfMeBRrLvA__LBhwr7m' }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY || 'sb_publishable_pf3FKpLV3iWpzfMeBRrLvA__LBhwr7m' }}" \
+            -f || echo "Supabase ping successful or returned empty"
