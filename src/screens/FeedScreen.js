@@ -15,8 +15,9 @@ export default function FeedScreen() {
     const [quantity, setQuantity] = useState('');
     const [cost, setCost] = useState('');
     const [date, setDate] = useState('');
+    const [unit, setUnit] = useState('kg');
 
-    const feedCategories = ['Green Fodder', 'Dry Fodder', 'Concentrates', 'Supplements'];
+    const [feedCategories, setFeedCategories] = useState(['Green Fodder', 'Dry Fodder', 'Concentrates', 'Supplements']);
 
     const fetchFeeds = async () => {
         try {
@@ -25,13 +26,17 @@ export default function FeedScreen() {
                 .select('*')
                 .order('date', { ascending: false });
             if (error) throw error;
-            const mapped = (data || []).map(f => ({
-                _id: f.id,
-                feedType: f.type,
-                quantity: f.quantity,
-                cost: f.cost,
-                date: f.date
-            }));
+            const mapped = (data || []).map(f => {
+                const parts = f.type.split('|');
+                return {
+                    _id: f.id,
+                    feedType: parts[0],
+                    unit: parts[1] || 'kg',
+                    quantity: f.quantity,
+                    cost: f.cost,
+                    date: f.date
+                };
+            });
             setFeeds(mapped);
         } catch (err) {
             console.error('Error fetching feeds:', err);
@@ -62,6 +67,65 @@ export default function FeedScreen() {
         };
     }, [feeds]);
 
+    const categoryStocks = useMemo(() => {
+        const stocks = {};
+        feedCategories.forEach(cat => {
+            stocks[cat] = 0;
+        });
+        feeds.forEach(f => {
+            stocks[f.feedType] = (stocks[f.feedType] || 0) + (f.quantity || 0);
+        });
+        return stocks;
+    }, [feeds, feedCategories]);
+
+    const lowStockCategories = useMemo(() => {
+        return Object.keys(categoryStocks).filter(cat => categoryStocks[cat] < 15);
+    }, [categoryStocks]);
+
+    const handleAddCategory = () => {
+        const performAdd = (newCat) => {
+            if (newCat && newCat.trim()) {
+                const trimmed = newCat.trim();
+                if (!feedCategories.includes(trimmed)) {
+                    setFeedCategories(prev => [...prev, trimmed]);
+                }
+                setFeedType(trimmed);
+            }
+        };
+
+        if (Platform.OS === 'web') {
+            const newCat = window.prompt('Enter new category name:');
+            performAdd(newCat);
+        } else {
+            Alert.prompt('New Category', 'Enter category name:', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Add', onPress: performAdd }
+            ]);
+        }
+    };
+
+    const handleDeleteCategory = (cat) => {
+        const systemDefaults = ['Green Fodder', 'Dry Fodder', 'Concentrates', 'Supplements'];
+        if (systemDefaults.includes(cat)) {
+            Alert.alert('Default Category', 'Default categories cannot be deleted.');
+            return;
+        }
+        
+        const performDelete = () => {
+            setFeedCategories(prev => prev.filter(c => c !== cat));
+            setFeedType('Green Fodder');
+        };
+
+        if (Platform.OS === 'web') {
+            if (window.confirm(`Delete category "${cat}"?`)) performDelete();
+        } else {
+            Alert.alert('Delete Category', `Are you sure you want to delete category "${cat}"?`, [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete', style: 'destructive', onPress: performDelete }
+            ]);
+        }
+    };
+
     const handleSaveFeed = async () => {
         if (!quantity || !cost) {
             Alert.alert('Error', 'Please fill Quantity and Cost');
@@ -69,7 +133,7 @@ export default function FeedScreen() {
         }
 
         const data = {
-            type: feedType,
+            type: `${feedType}|${unit}`,
             quantity: Number(quantity),
             cost: Number(cost),
             date: date ? new Date(date).toISOString() : new Date().toISOString()
@@ -114,6 +178,7 @@ export default function FeedScreen() {
         setQuantity('');
         setCost('');
         setDate('');
+        setUnit('kg');
         setModalVisible(true);
     };
 
@@ -141,7 +206,7 @@ export default function FeedScreen() {
 
                 <View style={{ alignItems: 'flex-end' }}>
                     <Text style={styles.cardCost}>₹{item.cost}</Text>
-                    <Text style={styles.cardQty}>{item.quantity} kg</Text>
+                    <Text style={styles.cardQty}>{item.quantity} {item.unit}</Text>
                 </View>
             </View>
 
@@ -174,6 +239,17 @@ export default function FeedScreen() {
                         <Text style={[styles.summaryValue, { color: '#ef4444' }]}>₹{totals.cost}</Text>
                     </View>
                 </View>
+                {lowStockCategories.length > 0 && (
+                    <View style={{ marginTop: 15, padding: 12, backgroundColor: 'rgba(239, 68, 68, 0.08)', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.2)', flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                        <Text style={{ fontSize: 18 }}>⚠️</Text>
+                        <View style={{ flex: 1 }}>
+                            <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>LOW STOCK ALERT</Text>
+                            <Text style={{ color: '#e1dacb', fontSize: 12, fontWeight: '600', marginTop: 2 }}>
+                                {lowStockCategories.join(', ')} stock is below 15 units!
+                            </Text>
+                        </View>
+                    </View>
+                )}
             </View>
 
             <FlatList
@@ -206,7 +282,14 @@ export default function FeedScreen() {
                         </View>
 
                         <ScrollView showsVerticalScrollIndicator={false}>
-                            <Text style={styles.inputLabel}>Feed Category</Text>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
+                                <Text style={{ fontSize: 13, color: '#8a7c6f', fontWeight: '600' }}>Feed Category</Text>
+                                {!['Green Fodder', 'Dry Fodder', 'Concentrates', 'Supplements'].includes(feedType) && (
+                                    <TouchableOpacity onPress={() => handleDeleteCategory(feedType)}>
+                                        <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '700' }}>🗑️ Delete Category</Text>
+                                    </TouchableOpacity>
+                                )}
+                            </View>
                             <View style={styles.categoryContainer}>
                                 {feedCategories.map(cat => (
                                     <TouchableOpacity
@@ -217,11 +300,17 @@ export default function FeedScreen() {
                                         <Text style={[styles.categoryText, feedType === cat && styles.categoryTextActive]}>{cat}</Text>
                                     </TouchableOpacity>
                                 ))}
+                                <TouchableOpacity
+                                    style={[styles.categoryBtn, { borderStyle: 'dashed', backgroundColor: 'transparent', borderColor: '#bba284' }]}
+                                    onPress={handleAddCategory}
+                                >
+                                    <Text style={{ color: '#bba284', fontWeight: '800' }}>+ ADD NEW</Text>
+                                </TouchableOpacity>
                             </View>
 
                             <View style={styles.rowInputs}>
                                 <View style={{ flex: 1, marginRight: 10 }}>
-                                    <Text style={styles.inputLabel}>Quantity (kg)</Text>
+                                    <Text style={styles.inputLabel}>Quantity</Text>
                                     <View style={styles.inputWrapper}>
                                         <Scale size={18} color="#8a7c6f" style={styles.inputIcon} />
                                         <TextInput
@@ -251,9 +340,22 @@ export default function FeedScreen() {
                                 </View>
                             </View>
 
+                            <Text style={styles.inputLabel}>Unit</Text>
+                            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                                {['litre', 'kg', 'bunch', 'gram', 'ml'].map(u => (
+                                    <TouchableOpacity
+                                        key={u}
+                                        style={[{ paddingVertical: 10, paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#382a20', borderWidth: 1, borderColor: '#4d3f34' }, unit === u && { backgroundColor: '#bba284', borderColor: '#bba284' }]}
+                                        onPress={() => setUnit(u)}
+                                    >
+                                        <Text style={[{ color: '#8a7c6f', fontSize: 13, fontWeight: '700' }, unit === u && { color: '#26170d' }]}>{u}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+
                             <View style={{ width: '100%', marginTop: 20 }}>
                                 <AppDatePicker
-                                    label="Purchase Date"
+                                    label="Purchase Date (Optional)"
                                     dateString={date}
                                     onDateChange={setDate}
                                     placeholder="Select Date"

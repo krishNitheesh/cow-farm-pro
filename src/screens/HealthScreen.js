@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, RefreshControl, Image, ScrollView, Platform, SafeAreaView, KeyboardAvoidingView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
@@ -73,6 +73,80 @@ export default function HealthScreen() {
             fetchData();
         }, [])
     );
+
+    const vaccineAlerts = useMemo(() => {
+        const alerts = [];
+        const today = new Date();
+        
+        cows.forEach(cow => {
+            // Check FMD Vaccine (Foot and Mouth)
+            const fmdLogs = records.filter(r => r.cow?._id === cow._id && r.diseaseName.toLowerCase().includes('fmd'));
+            if (fmdLogs.length === 0) {
+                alerts.push({ cowName: cow.name, vaccine: 'FMD Vaccine', status: 'Pending', color: '#ef4444', desc: 'Critical: No record of FMD immunization.' });
+            } else {
+                const lastFmd = new Date(fmdLogs[0].doctorVisitDate);
+                const diffMonths = (today - lastFmd) / (1000 * 60 * 60 * 24 * 30.4);
+                if (diffMonths >= 6) {
+                    alerts.push({ cowName: cow.name, vaccine: 'FMD Booster', status: 'Overdue', color: '#f59e0b', desc: `Overdue: Last dose was ${Math.round(diffMonths)} months ago.` });
+                }
+            }
+
+            // Check Anthrax Vaccine
+            const anthraxLogs = records.filter(r => r.cow?._id === cow._id && r.diseaseName.toLowerCase().includes('anthrax'));
+            if (anthraxLogs.length === 0) {
+                alerts.push({ cowName: cow.name, vaccine: 'Anthrax Vaccine', status: 'Pending', color: '#ef4444', desc: 'Annual Anthrax immunization recommended.' });
+            } else {
+                const lastAnthrax = new Date(anthraxLogs[0].doctorVisitDate);
+                const diffYears = (today - lastAnthrax) / (1000 * 60 * 60 * 24 * 365);
+                if (diffYears >= 1) {
+                    alerts.push({ cowName: cow.name, vaccine: 'Anthrax Booster', status: 'Overdue', color: '#f59e0b', desc: `Overdue: Last dose was over a year ago.` });
+                }
+            }
+        });
+
+        return alerts;
+    }, [cows, records]);
+
+    const renderHeader = () => {
+        if (vaccineAlerts.length === 0) {
+            return (
+                <View style={styles.alertHeaderContainer}>
+                    <View style={[styles.alertCard, { borderColor: '#10b981', backgroundColor: 'rgba(16, 185, 129, 0.1)', width: '100%' }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <Activity size={20} color="#10b981" />
+                            <View style={{ flex: 1 }}>
+                                <Text style={[styles.alertTitle, { color: '#10b981' }]}>All Vaccinations Up to Date</Text>
+                                <Text style={styles.alertDesc}>All registered cows have active immunizations.</Text>
+                            </View>
+                        </View>
+                    </View>
+                </View>
+            );
+        }
+
+        return (
+            <View style={styles.alertHeaderContainer}>
+                <Text style={styles.alertSectionTitle}>Vaccination Alerts ({vaccineAlerts.length})</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.alertScroll}>
+                    {vaccineAlerts.map((alert, index) => (
+                        <View key={index} style={[styles.alertCard, { borderColor: alert.color, marginRight: 12 }]}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Activity size={16} color={alert.color} />
+                                    <Text style={[styles.alertTitle, { color: alert.color }]}>{alert.vaccine}</Text>
+                                </View>
+                                <View style={[styles.alertBadge, { backgroundColor: alert.color }]}>
+                                    <Text style={styles.alertBadgeText}>{alert.status}</Text>
+                                </View>
+                            </View>
+                            <Text style={styles.alertCowName}>{alert.cowName}</Text>
+                            <Text style={styles.alertDesc}>{alert.desc}</Text>
+                        </View>
+                    ))}
+                </ScrollView>
+            </View>
+        );
+    };
 
     const pickMedicineImage = async (index, useCamera = false) => {
         const permission = useCamera
@@ -336,6 +410,7 @@ export default function HealthScreen() {
                 keyExtractor={item => item._id}
                 renderItem={renderHealthRecord}
                 contentContainerStyle={styles.list}
+                ListHeaderComponent={renderHeader}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchData().finally(() => setRefreshing(false)); }} tintColor="#bba284" />}
                 ListEmptyComponent={<Text style={styles.emptyText}>No health records registered yet.</Text>}
             />
@@ -485,6 +560,22 @@ export default function HealthScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#26170d' },
+
+    alertHeaderContainer: { marginBottom: 20 },
+    alertSectionTitle: { fontSize: 16, fontWeight: '800', color: '#bba284', marginBottom: 12, letterSpacing: 0.5 },
+    alertScroll: { flexDirection: 'row' },
+    alertCard: {
+        width: 280,
+        backgroundColor: 'rgba(56, 42, 32, 0.6)',
+        borderRadius: 16,
+        padding: 14,
+        borderWidth: 1.5,
+    },
+    alertTitle: { fontSize: 14, fontWeight: '800' },
+    alertBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+    alertBadgeText: { fontSize: 9, fontWeight: '800', color: '#26170d' },
+    alertCowName: { fontSize: 16, fontWeight: '800', color: '#fff', marginTop: 6, marginBottom: 2 },
+    alertDesc: { fontSize: 12, color: '#8a7c6f', lineHeight: 16 },
 
     header: { paddingHorizontal: 20, paddingTop: 30, paddingBottom: 10 },
     headerSubtitle: { fontSize: 13, fontWeight: '700', color: '#8a7c6f', letterSpacing: 1.5, marginBottom: 4 },

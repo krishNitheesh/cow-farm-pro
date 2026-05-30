@@ -2,7 +2,8 @@ import React, { useState, useCallback, useMemo } from 'react';
 import {
     View, Text, StyleSheet, FlatList, TouchableOpacity,
     Modal, TextInput, Alert, RefreshControl,
-    KeyboardAvoidingView, Platform, ScrollView, Image, SafeAreaView
+    KeyboardAvoidingView, Platform, ScrollView, Image, SafeAreaView,
+    useWindowDimensions
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -14,6 +15,10 @@ import * as Sharing from 'expo-sharing';
 import AppDatePicker from '../components/AppDatePicker';
 
 export default function CowsScreen() {
+    const { width } = useWindowDimensions();
+    const numColumns = width > 768 ? 2 : 1;
+    const flatListKey = `cols-${numColumns}`;
+
     const [cows, setCows] = useState([]);
     const [isModalVisible, setModalVisible] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
@@ -30,6 +35,10 @@ export default function CowsScreen() {
     const [calvedCount, setCalvedCount] = useState('');
     const [isPregnant, setIsPregnant] = useState(false);
     const [matingDate, setMatingDate] = useState('');
+    const [abortionDate, setAbortionDate] = useState('');
+    const [unsuccessfulInseminationDate, setUnsuccessfulInseminationDate] = useState('');
+    const [showAbortionInput, setShowAbortionInput] = useState(false);
+    const [showUnsuccessfulInseminationInput, setShowUnsuccessfulInseminationInput] = useState(false);
     const [buyingDate, setBuyingDate] = useState('');
     const [cost, setCost] = useState('');
     const [imageUri, setImageUri] = useState('');
@@ -52,6 +61,8 @@ export default function CowsScreen() {
                 calvedCount: c.calved_count,
                 isPregnant: c.is_pregnant,
                 matingDate: c.mating_date,
+                abortionDate: c.abortion_date,
+                unsuccessfulInseminationDate: c.unsuccessful_insemination_date,
                 buyingDate: c.buying_date,
                 cost: c.cost,
                 imageUrl: c.image_url,
@@ -145,6 +156,10 @@ export default function CowsScreen() {
         setCalvedCount('');
         setIsPregnant(false);
         setMatingDate('');
+        setAbortionDate('');
+        setUnsuccessfulInseminationDate('');
+        setShowAbortionInput(false);
+        setShowUnsuccessfulInseminationInput(false);
         setBuyingDate('');
         setCost('');
         setImageUri('');
@@ -202,6 +217,8 @@ export default function CowsScreen() {
                 calved_count: calvedCount ? Number(calvedCount) : 0,
                 is_pregnant: isPregnant,
                 mating_date: isPregnant && matingDate ? new Date(matingDate).toISOString() : null,
+                abortion_date: abortionDate ? new Date(abortionDate).toISOString() : null,
+                unsuccessful_insemination_date: unsuccessfulInseminationDate ? new Date(unsuccessfulInseminationDate).toISOString() : null,
                 buying_date: buyingDate ? new Date(buyingDate).toISOString() : null,
                 cost: Number(cost),
                 image_url: imageUri || null,
@@ -227,6 +244,8 @@ export default function CowsScreen() {
                 calved_count: calvedCount ? Number(calvedCount) : 0,
                 is_pregnant: isPregnant,
                 mating_date: isPregnant && matingDate ? new Date(matingDate).toISOString() : null,
+                abortion_date: abortionDate ? new Date(abortionDate).toISOString() : null,
+                unsuccessful_insemination_date: unsuccessfulInseminationDate ? new Date(unsuccessfulInseminationDate).toISOString() : null,
                 buying_date: buyingDate ? new Date(buyingDate).toISOString() : null,
                 cost: Number(cost),
                 image_url: imageUri || null,
@@ -268,6 +287,10 @@ export default function CowsScreen() {
         setCalvedCount(item.calvedCount ? String(item.calvedCount) : '');
         setIsPregnant(item.isPregnant || false);
         setMatingDate(item.matingDate ? new Date(item.matingDate).toISOString().split('T')[0] : '');
+        setAbortionDate(item.abortionDate ? new Date(item.abortionDate).toISOString().split('T')[0] : '');
+        setUnsuccessfulInseminationDate(item.unsuccessfulInseminationDate ? new Date(item.unsuccessfulInseminationDate).toISOString().split('T')[0] : '');
+        setShowAbortionInput(!!item.abortionDate);
+        setShowUnsuccessfulInseminationInput(!!item.unsuccessfulInseminationDate);
         setBuyingDate(item.buyingDate ? new Date(item.buyingDate).toISOString().split('T')[0] : '');
         setCost(item.cost ? String(item.cost) : '');
         setImageUri(item.imageUrl || '');
@@ -275,10 +298,17 @@ export default function CowsScreen() {
     };
 
     const renderCow = ({ item }) => {
+        const calves = item.calvedCount || 0;
+        const failed = (item.abortionDate ? 1 : 0) + (item.unsuccessfulInseminationDate ? 1 : 0);
+        const totalAttempts = calves + failed;
+        const successRate = totalAttempts > 0 ? Math.round((calves / totalAttempts) * 100) : null;
+
         let pregnancyDetails = null;
-        if (item.isPregnant && item.matingDate) {
+        if (item.isPregnant && item.matingDate && !item.abortionDate) {
             const matingDate = new Date(item.matingDate);
-            const deliveryDate = new Date(matingDate.getTime() + 283 * 24 * 60 * 60 * 1000); // 283 days gestation
+            const deliveryDate = new Date(matingDate.getTime() + 283 * 24 * 60 * 60 * 1000); // 283 days average
+            const minDeliveryDate = new Date(matingDate.getTime() + 279 * 24 * 60 * 60 * 1000); // 279 days min
+            const maxDeliveryDate = new Date(matingDate.getTime() + 292 * 24 * 60 * 60 * 1000); // 292 days max
             const today = new Date();
             const daysPregnant = Math.max(0, Math.floor((today - matingDate) / (1000 * 60 * 60 * 24)));
             let daysLeft = 283 - daysPregnant;
@@ -286,16 +316,25 @@ export default function CowsScreen() {
             const percent = Math.min(100, (daysPregnant / 283) * 100);
             const isClose = daysLeft <= 30;
 
-            pregnancyDetails = (
-                <View style={{ marginTop: 15, padding: 12, backgroundColor: 'rgba(187, 162, 132, 0.05)', borderRadius: 12, borderWidth: 1, borderColor: isClose ? 'rgba(239, 68, 68, 0.3)' : 'rgba(187, 162, 132, 0.2)' }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, alignItems: 'center' }}>
-                        <Text style={{ color: isClose ? '#ef4444' : '#bba284', fontSize: 13, fontWeight: '800' }}>
-                            {isClose ? `🚨 DUE IN ${daysLeft} DAYS` : `Pregnant: ${daysPregnant} Days`}
-                        </Text>
-                        <Text style={{ color: '#8a7c6f', fontSize: 11, fontWeight: '600' }}>
-                            Est. {deliveryDate.toLocaleDateString()}
-                        </Text>
-                    </View>
+             const formatDate = (d) => {
+                 const day = String(d.getDate()).padStart(2, '0');
+                 const month = String(d.getMonth() + 1).padStart(2, '0');
+                 const year = d.getFullYear();
+                 return `${day}/${month}/${year}`;
+             };
+
+             pregnancyDetails = (
+                 <View style={{ marginTop: 15, padding: 12, backgroundColor: 'rgba(187, 162, 132, 0.05)', borderRadius: 12, borderWidth: 1, borderColor: isClose ? 'rgba(239, 68, 68, 0.3)' : 'rgba(187, 162, 132, 0.2)' }}>
+                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, alignItems: 'center' }}>
+                         <Text style={{ color: isClose ? '#ef4444' : '#bba284', fontSize: 13, fontWeight: '800' }}>
+                             {isClose ? `🚨 DUE IN ${daysLeft} DAYS` : `Pregnant: ${daysPregnant} Days`}
+                         </Text>
+                         <View style={{ alignItems: 'flex-end' }}>
+                             <Text style={{ color: '#e1dacb', fontSize: 11, fontWeight: '800' }}>
+                                 Est. {formatDate(minDeliveryDate)} - {formatDate(maxDeliveryDate)}
+                             </Text>
+                         </View>
+                     </View>
                     <View style={{ height: 6, backgroundColor: '#1a0e08', borderRadius: 3, overflow: 'hidden' }}>
                         <View style={{ width: `${percent}%`, height: '100%', backgroundColor: isClose ? '#ef4444' : '#10b981', borderRadius: 3 }} />
                     </View>
@@ -303,51 +342,143 @@ export default function CowsScreen() {
             );
         }
 
+        const getLactationStage = () => {
+             if (calves === 0) return { label: 'Heifer', color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)' };
+             
+             if (item.isPregnant && item.matingDate && !item.abortionDate) {
+                 const matingDate = new Date(item.matingDate);
+                 const today = new Date();
+                 const daysPregnant = Math.floor((today - matingDate) / (1000 * 60 * 60 * 24));
+                 if (daysPregnant >= 220) {
+                     return { label: 'Dry Period', color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.15)' };
+                 }
+             }
+             return { label: 'Active Milker', color: '#10b981', bg: 'rgba(16, 185, 129, 0.15)' };
+         };
+         const stage = getLactationStage();
+
+        const timelineEvents = [];
+        if (item.buyingDate) {
+            timelineEvents.push({
+                title: 'Purchased Cow',
+                date: new Date(item.buyingDate),
+                color: '#bba284',
+                label: 'Registry'
+            });
+        }
+        if (item.matingDate) {
+            timelineEvents.push({
+                title: item.isPregnant ? 'Mating (Active)' : 'Mating',
+                date: new Date(item.matingDate),
+                color: '#10b981',
+                label: 'Breeding'
+            });
+        }
+        if (item.abortionDate) {
+            timelineEvents.push({
+                title: 'Abortion (Loss)',
+                date: new Date(item.abortionDate),
+                color: '#ef4444',
+                label: 'Event'
+            });
+        }
+        if (item.unsuccessfulInseminationDate) {
+            timelineEvents.push({
+                title: 'Unsuccessful Insem.',
+                date: new Date(item.unsuccessfulInseminationDate),
+                color: '#f59e0b',
+                label: 'Attempt'
+            });
+        }
+
+        timelineEvents.sort((a, b) => b.date - a.date);
+
         return (
             <View style={styles.recordCard}>
                 <View style={styles.cardHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                    <View style={styles.iconThumb}>
-                        <BookOpen size={16} color="#e1dacb" />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <View style={styles.iconThumb}>
+                            <BookOpen size={16} color="#e1dacb" />
+                        </View>
+                        <Text style={styles.cowName} numberOfLines={1}>{item.name}</Text>
+                        <View style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, backgroundColor: stage.bg, borderRadius: 6, borderWidth: 1, borderColor: stage.color }}>
+                            <Text style={{ color: stage.color, fontSize: 9, fontWeight: '800' }}>{stage.label.toUpperCase()}</Text>
+                        </View>
+                        {item.abortionDate && (
+                            <View style={{ marginLeft: 6, paddingHorizontal: 8, paddingVertical: 2, backgroundColor: '#ef4444', borderRadius: 6 }}>
+                                <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>ABORTED</Text>
+                            </View>
+                        )}
                     </View>
-                    <Text style={styles.cowName} numberOfLines={1}>{item.name}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <Text style={styles.costBadge}>₹{item.cost}</Text>
+                        <TouchableOpacity onPress={() => openEditModal(item)} style={styles.actionBtn}>
+                            <Edit size={17} color="#bba284" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleDeleteCow(item._id)} style={styles.actionBtn}>
+                            <Trash2 size={17} color="#ef4444" />
+                        </TouchableOpacity>
+                    </View>
                 </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={styles.costBadge}>₹{item.cost}</Text>
-                    <TouchableOpacity onPress={() => openEditModal(item)} style={styles.actionBtn}>
-                        <Edit size={17} color="#bba284" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDeleteCow(item._id)} style={styles.actionBtn}>
-                        <Trash2 size={17} color="#ef4444" />
-                    </TouchableOpacity>
+
+                {item.imageUrl ? (
+                    <Image source={{ uri: item.imageUrl }} style={styles.cowCardImage} />
+                ) : null}
+
+                <View style={styles.statsRow}>
+                    <View style={styles.statCol}>
+                        <Text style={styles.statLabel}>AGE</Text>
+                        <Text style={styles.statValue}>{item.age} yrs</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statCol}>
+                        <Text style={styles.statLabel}>CALVES</Text>
+                        <Text style={styles.statValue}>{item.calvedCount || 0}</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statCol}>
+                        <Text style={styles.statLabel}>PREGNANT</Text>
+                        <Text style={[styles.statValue, { color: item.abortionDate ? '#ef4444' : item.isPregnant ? '#10b981' : '#b0a091' }]}>
+                            {item.abortionDate ? 'Aborted' : item.isPregnant ? 'Yes' : 'No'}
+                        </Text>
+                    </View>
                 </View>
+
+                {successRate !== null && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, paddingHorizontal: 15, paddingVertical: 10, backgroundColor: 'rgba(0,0,0,0.15)', borderRadius: 12 }}>
+                        <Text style={{ color: '#8a7c6f', fontSize: 11, fontWeight: '800' }}>SUCCESS RATE</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: successRate >= 70 ? '#10b981' : successRate >= 40 ? '#f59e0b' : '#ef4444' }} />
+                            <Text style={{ color: successRate >= 70 ? '#10b981' : successRate >= 40 ? '#f59e0b' : '#ef4444', fontSize: 13, fontWeight: '800' }}>{successRate}%</Text>
+                        </View>
+                    </View>
+                )}
+
+                {pregnancyDetails}
+
+                {timelineEvents.length > 0 && (
+                    <View style={{ marginTop: 15, padding: 15, backgroundColor: 'rgba(0,0,0,0.15)', borderRadius: 16 }}>
+                        <Text style={{ color: '#8a7c6f', fontSize: 11, fontWeight: '800', letterSpacing: 1, marginBottom: 10 }}>REPRODUCTIVE TIMELINE</Text>
+                        {timelineEvents.map((evt, idx) => (
+                            <View key={idx} style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: idx === timelineEvents.length - 1 ? 0 : 12 }}>
+                                <View style={{ alignItems: 'center', marginRight: 10, height: '100%', minHeight: 30 }}>
+                                    <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: evt.color, marginTop: 4 }} />
+                                    {idx !== timelineEvents.length - 1 && (
+                                        <View style={{ width: 2, flex: 1, backgroundColor: '#4d3f34', marginTop: 4, minHeight: 15 }} />
+                                    )}
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{evt.title}</Text>
+                                        <Text style={{ color: '#8a7c6f', fontSize: 11, fontWeight: '600' }}>{evt.date.toLocaleDateString()}</Text>
+                                    </View>
+                                    <Text style={{ color: evt.color, fontSize: 10, fontWeight: '800', textTransform: 'uppercase', marginTop: 2 }}>{evt.label}</Text>
+                                </View>
+                            </View>
+                        ))}
+                    </View>
+                )}
             </View>
-
-            {item.imageUrl ? (
-                <Image source={{ uri: item.imageUrl }} style={styles.cowCardImage} />
-            ) : null}
-
-            <View style={styles.statsRow}>
-                <View style={styles.statCol}>
-                    <Text style={styles.statLabel}>AGE</Text>
-                    <Text style={styles.statValue}>{item.age} yrs</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statCol}>
-                    <Text style={styles.statLabel}>CALVES</Text>
-                    <Text style={styles.statValue}>{item.calvedCount || 0}</Text>
-                </View>
-                <View style={styles.statDivider} />
-                <View style={styles.statCol}>
-                    <Text style={styles.statLabel}>PREGNANT</Text>
-                    <Text style={[styles.statValue, { color: item.isPregnant ? '#10b981' : '#b0a091' }]}>
-                        {item.isPregnant ? 'Yes' : 'No'}
-                    </Text>
-                </View>
-            </View>
-
-            {pregnancyDetails}
-        </View>
         );
     };
 
@@ -419,9 +550,12 @@ export default function CowsScreen() {
             </TouchableOpacity>
 
             <FlatList
+                key={flatListKey}
+                numColumns={numColumns}
                 data={filteredCows}
                 keyExtractor={item => item._id}
                 renderItem={renderCow}
+                columnWrapperStyle={numColumns > 1 ? { gap: 16 } : null}
                 contentContainerStyle={styles.list}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#bba284" />}
                 ListEmptyComponent={<Text style={styles.emptyText}>No cows match your search filters.</Text>}
@@ -496,6 +630,52 @@ export default function CowsScreen() {
                                 </View>
                             )}
 
+                            <Text style={styles.inputLabel}>Record Event (Optional)</Text>
+                            <View style={styles.toggleRow}>
+                                <TouchableOpacity 
+                                    style={[styles.toggleBtn, showAbortionInput && styles.toggleBtnActive]} 
+                                    onPress={() => {
+                                        const next = !showAbortionInput;
+                                        setShowAbortionInput(next);
+                                        if (!next) setAbortionDate('');
+                                    }}
+                                >
+                                    <Text style={[styles.toggleBtnText, showAbortionInput && styles.toggleBtnTextActive]}>ABORTION</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity 
+                                    style={[styles.toggleBtn, showUnsuccessfulInseminationInput && styles.toggleBtnActive]} 
+                                    onPress={() => {
+                                        const next = !showUnsuccessfulInseminationInput;
+                                        setShowUnsuccessfulInseminationInput(next);
+                                        if (!next) setUnsuccessfulInseminationDate('');
+                                    }}
+                                >
+                                    <Text style={[styles.toggleBtnText, showUnsuccessfulInseminationInput && styles.toggleBtnTextActive]}>UNSUCCESSFUL INSEM.</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            {showAbortionInput && (
+                                <View style={{ width: '100%', marginTop: 5 }}>
+                                    <AppDatePicker 
+                                        label="Abortion Date" 
+                                        dateString={abortionDate} 
+                                        onDateChange={setAbortionDate} 
+                                        placeholder="Select Abortion Date" 
+                                    />
+                                </View>
+                            )}
+
+                            {showUnsuccessfulInseminationInput && (
+                                <View style={{ width: '100%', marginTop: 5 }}>
+                                    <AppDatePicker 
+                                        label="Unsuccessful Insemination Date" 
+                                        dateString={unsuccessfulInseminationDate} 
+                                        onDateChange={setUnsuccessfulInseminationDate} 
+                                        placeholder="Select Unsuccessful Insemination Date" 
+                                    />
+                                </View>
+                            )}
+
                             <View style={{ width: '100%', marginTop: 5 }}>
                                 <AppDatePicker 
                                     label="Buying Date (Optional)" 
@@ -540,7 +720,7 @@ const styles = StyleSheet.create({
     pregBtnActiveText: { color: '#26170d' },
 
     list: { paddingHorizontal: 20, paddingBottom: 100 },
-    recordCard: { backgroundColor: '#382a20', padding: 18, borderRadius: 24, marginBottom: 16, borderWidth: 1, borderColor: '#4d3f34' },
+    recordCard: { flex: 1, backgroundColor: '#382a20', padding: 18, borderRadius: 24, marginBottom: 16, borderWidth: 1, borderColor: '#4d3f34' },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
     iconThumb: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#4d3f34', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
     cowName: { fontSize: 18, fontWeight: '800', color: '#fff', flex: 1 },

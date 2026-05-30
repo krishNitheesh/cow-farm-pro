@@ -23,7 +23,7 @@
       }
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/krishna_logo.png"
     },
     "extra": {
       "eas": {

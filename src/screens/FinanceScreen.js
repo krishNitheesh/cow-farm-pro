@@ -14,6 +14,8 @@ export default function FinanceScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const [isEditMode, setIsEditMode] = useState(false);
     const [editId, setEditId] = useState(null);
+    const [allMilkRevenue, setAllMilkRevenue] = useState(0);
+    const [milkEntries, setMilkEntries] = useState([]);
 
     // Form State
     const [type, setType] = useState('income');
@@ -21,6 +23,23 @@ export default function FinanceScreen() {
     const [category, setCategory] = useState('');
     const [description, setDescription] = useState('');
     const [date, setDate] = useState('');
+
+    const fetchMilkTurnover = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('milk_entries')
+                .select('id, quantity, total_price, date, session, vendees(name)');
+            
+            if (error) throw error;
+            
+            const revenue = (data || []).reduce((sum, item) => sum + Number(item.total_price), 0);
+            
+            setAllMilkRevenue(revenue);
+            setMilkEntries(data || []);
+        } catch (err) {
+            console.error('Error fetching milk turnover:', err);
+        }
+    };
 
     const fetchTransactions = async () => {
         try {
@@ -46,12 +65,13 @@ export default function FinanceScreen() {
     useFocusEffect(
         useCallback(() => {
             fetchTransactions();
+            fetchMilkTurnover();
         }, [])
     );
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
-        fetchTransactions().finally(() => setRefreshing(false));
+        Promise.all([fetchTransactions(), fetchMilkTurnover()]).finally(() => setRefreshing(false));
     }, []);
 
     const totals = useMemo(() => {
@@ -61,12 +81,49 @@ export default function FinanceScreen() {
             if (t.type === 'income') income += t.amount;
             else expense += t.amount;
         });
+        income += allMilkRevenue;
         return {
             income: income.toFixed(2),
             expense: expense.toFixed(2),
             balance: (income - expense).toFixed(2)
         };
-    }, [transactions]);
+    }, [transactions, allMilkRevenue]);
+
+    const todayLiters = useMemo(() => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        return milkEntries
+            .filter(e => e.date && e.date.split('T')[0] === todayStr)
+            .reduce((sum, item) => sum + Number(item.quantity), 0);
+    }, [milkEntries]);
+
+    const todayRevenue = useMemo(() => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        return milkEntries
+            .filter(e => e.date && e.date.split('T')[0] === todayStr)
+            .reduce((sum, item) => sum + Number(item.total_price), 0);
+    }, [milkEntries]);
+
+    const allTransactions = useMemo(() => {
+        const list = [...transactions];
+        
+        // Add all milk entries as virtual transaction records!
+        milkEntries.forEach(entry => {
+            const vendeeName = entry.vendees?.name || 'Milk Sales';
+            list.push({
+                _id: `milk-sales-virtual-${entry.id}`,
+                type: 'income',
+                amount: entry.total_price,
+                category: `Milk Sales (${vendeeName})`,
+                description: `${entry.quantity} Liters - ${entry.session || 'Morning'}`,
+                date: entry.date,
+                isVirtual: true
+            });
+        });
+
+        // Sort chronologically descending
+        list.sort((a, b) => new Date(b.date) - new Date(a.date));
+        return list;
+    }, [transactions, milkEntries]);
 
     const handleExport = async (exportType) => {
         try {
@@ -193,13 +250,20 @@ export default function FinanceScreen() {
     };
 
     const renderTransaction = ({ item }) => (
-        <View style={styles.card}>
+        <View style={[styles.card, item.isVirtual && { borderStyle: 'dashed', borderColor: '#22c55e', backgroundColor: 'rgba(34, 197, 94, 0.04)' }]}>
             <View style={styles.cardInfo}>
                 <View style={[styles.iconBox, { backgroundColor: item.type === 'income' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)' }]}>
                     {item.type === 'income' ? <TrendingUp size={20} color="#22c55e" /> : <TrendingDown size={20} color="#ef4444" />}
                 </View>
                 <View style={styles.textDetails}>
-                    <Text style={styles.cardCategory}>{item.category}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.cardCategory}>{item.category}</Text>
+                        {item.isVirtual && (
+                            <View style={{ paddingHorizontal: 6, paddingVertical: 2, backgroundColor: 'rgba(34, 197, 94, 0.15)', borderRadius: 4 }}>
+                                <Text style={{ color: '#22c55e', fontSize: 9, fontWeight: '800' }}>AUTO</Text>
+                            </View>
+                        )}
+                    </View>
                     {item.description ? <Text style={styles.cardDesc}>{item.description}</Text> : null}
                     <Text style={styles.cardDate}>{new Date(item.date).toLocaleDateString()}</Text>
                 </View>
@@ -208,14 +272,16 @@ export default function FinanceScreen() {
                 <Text style={[styles.cardAmount, { color: item.type === 'income' ? '#22c55e' : '#ef4444' }]}>
                     {item.type === 'expense' ? '-' : '+'}₹{item.amount}
                 </Text>
-                <View style={styles.btnRow}>
-                    <TouchableOpacity onPress={() => openEditModal(item)} style={styles.miniBtn}>
-                        <Edit3 size={16} color="#8a7c6f" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => handleDeleteTransaction(item._id)} style={styles.miniBtn}>
-                        <Trash2 size={16} color="#4d3f34" />
-                    </TouchableOpacity>
-                </View>
+                {!item.isVirtual && (
+                    <View style={styles.btnRow}>
+                        <TouchableOpacity onPress={() => openEditModal(item)} style={styles.miniBtn}>
+                            <Edit3 size={16} color="#8a7c6f" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => handleDeleteTransaction(item._id)} style={styles.miniBtn}>
+                            <Trash2 size={16} color="#4d3f34" />
+                        </TouchableOpacity>
+                    </View>
+                )}
             </View>
         </View>
     );
@@ -243,6 +309,21 @@ export default function FinanceScreen() {
                     </View>
                 </View>
 
+                <View style={{ backgroundColor: 'rgba(34, 197, 94, 0.08)', borderRadius: 20, padding: 18, marginBottom: 15, borderWidth: 1, borderColor: 'rgba(34, 197, 94, 0.2)' }}>
+                    <Text style={{ color: '#22c55e', fontSize: 11, fontWeight: '800', letterSpacing: 1.5, marginBottom: 12, textAlign: 'center' }}>TODAY'S TURNOVER (MILK SALES)</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View style={{ flex: 1, alignItems: 'center' }}>
+                            <Text style={{ color: '#8a7c6f', fontSize: 11, fontWeight: '700', marginBottom: 4 }}>TOTAL LITERS</Text>
+                            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>{todayLiters.toFixed(1)} L</Text>
+                        </View>
+                        <View style={{ width: 1, height: 30, backgroundColor: 'rgba(34, 197, 94, 0.2)' }} />
+                        <View style={{ flex: 1, alignItems: 'center' }}>
+                            <Text style={{ color: '#8a7c6f', fontSize: 11, fontWeight: '700', marginBottom: 4 }}>EXPECTED REVENUE</Text>
+                            <Text style={{ color: '#22c55e', fontSize: 18, fontWeight: '800' }}>₹{todayRevenue.toFixed(2)}</Text>
+                        </View>
+                    </View>
+                </View>
+
                 {/* Export Options */}
                 <View style={styles.exportSection}>
                     <Text style={styles.exportTitle}>GENERATE EXCEL REPORTS</Text>
@@ -264,7 +345,7 @@ export default function FinanceScreen() {
             </View>
 
             <FlatList
-                data={transactions}
+                data={allTransactions}
                 keyExtractor={item => item._id}
                 renderItem={renderTransaction}
                 contentContainerStyle={styles.list}

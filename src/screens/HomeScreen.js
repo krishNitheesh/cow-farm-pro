@@ -13,6 +13,8 @@ export default function HomeScreen({ navigation }) {
         milkProducedToday: 0,
         totalExpenses: 0,
         walletBalance: 0,
+        topCowName: '',
+        topCowMilk: 0
     });
     const [refreshing, setRefreshing] = useState(false);
     
@@ -32,20 +34,25 @@ export default function HomeScreen({ navigation }) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
 
-            const [cowsCountRes, milkTodayRes, transactionsRes] = await Promise.all([
+            const [cowsCountRes, milkTodayRes, transactionsRes, milkAllRes, milkEntriesWithCows] = await Promise.all([
                 supabase.from('cows').select('*', { count: 'exact', head: true }),
                 supabase.from('milk_entries').select('quantity').gte('date', today.toISOString()),
-                supabase.from('transactions').select('type, amount')
+                supabase.from('transactions').select('type, amount'),
+                supabase.from('milk_entries').select('total_price'),
+                supabase.from('milk_entries').select('quantity, cows(name)').gte('date', today.toISOString())
             ]);
 
             if (cowsCountRes.error) throw cowsCountRes.error;
             if (milkTodayRes.error) throw milkTodayRes.error;
             if (transactionsRes.error) throw transactionsRes.error;
+            if (milkAllRes.error) throw milkAllRes.error;
+            if (milkEntriesWithCows.error) throw milkEntriesWithCows.error;
 
             const totalCows = cowsCountRes.count || 0;
             const milkProducedToday = (milkTodayRes.data || []).reduce((acc, entry) => acc + (Number(entry.quantity) || 0), 0);
+            const totalMilkRevenue = (milkAllRes.data || []).reduce((acc, entry) => acc + (Number(entry.total_price) || 0), 0);
 
-            let walletBalance = 0;
+            let walletBalance = totalMilkRevenue;
             let totalExpenses = 0;
 
             (transactionsRes.data || []).forEach(t => {
@@ -58,11 +65,29 @@ export default function HomeScreen({ navigation }) {
                 }
             });
 
+            const cowMilkMap = {};
+            (milkEntriesWithCows.data || []).forEach(entry => {
+                if (entry.cows && entry.cows.name) {
+                    const name = entry.cows.name;
+                    cowMilkMap[name] = (cowMilkMap[name] || 0) + Number(entry.quantity);
+                }
+            });
+            let topCowName = '';
+            let topCowMilk = 0;
+            Object.keys(cowMilkMap).forEach(name => {
+                if (cowMilkMap[name] > topCowMilk) {
+                    topCowMilk = cowMilkMap[name];
+                    topCowName = name;
+                }
+            });
+
             setStats({
                 totalCows,
                 milkProducedToday,
                 totalExpenses,
-                walletBalance
+                walletBalance,
+                topCowName,
+                topCowMilk
             });
         } catch (error) {
             console.log('Error fetching dashboard stats:', error);
@@ -183,6 +208,12 @@ export default function HomeScreen({ navigation }) {
                         <Text style={[styles.activityLabel, { color: '#bba284', fontSize: 15 * scale }]}>Total Cows</Text>
                     </View>
                 </View>
+                {stats.topCowName ? (
+                    <View style={{ marginTop: 15, paddingTop: 15, borderTopWidth: 1, borderTopColor: '#4d3f34', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text style={{ color: '#8a7c6f', fontSize: 13 * scale, fontWeight: '700' }}>👑 TOP PERFORMER TODAY</Text>
+                        <Text style={{ color: '#bba284', fontSize: 13 * scale, fontWeight: '800' }}>{stats.topCowName} ({stats.topCowMilk} L)</Text>
+                    </View>
+                ) : null}
             </View>
 
             <Text style={[styles.sectionTitle, { fontSize: 22 * scale }]}>Finances</Text>

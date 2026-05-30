@@ -9,8 +9,8 @@ const MONTHS = [
 
 const YEARS = [];
 const currentYear = new Date().getFullYear();
-// Generate a wide list of years for cow records (e.g. from 2010 to current year + 10)
-for (let y = 2010; y <= currentYear + 10; y++) {
+// Generate a wide list of years for cow records up to 2136
+for (let y = 2010; y <= 2136; y++) {
     YEARS.push(y);
 }
 
