@@ -30,8 +30,8 @@ function MainTabs() {
                     backgroundColor: '#382a20',
                     borderTopWidth: 1,
                     borderTopColor: '#26170d',
-                    paddingBottom: 5,
-                    height: 60,
+                    paddingBottom: Platform.OS === 'ios' ? 20 : 15,
+                    height: Platform.OS === 'ios' ? 85 : 75,
                 },
             }}
         >
