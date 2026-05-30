@@ -1,29 +1,39 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "cow-farm-pro",
+    "slug": "cow-farm-pro",
+    "scheme": "cowfarm",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/krishna_logo.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/krishna_logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#26170d"
     },
     "ios": {
       "supportsTablet": true
     },
     "android": {
+      "package": "com.cowfarm.management",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#26170d",
+        "foregroundImage": "./assets/krishna_logo.png"
       }
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "327fe42e-474f-4a3a-a482-6b535e4d282d"
+      }
+    },
+    "plugins": [
+      "expo-web-browser",
+      "@react-native-community/datetimepicker",
+      "expo-sharing"
+    ]
   }
 }
