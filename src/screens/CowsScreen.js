@@ -63,11 +63,25 @@ export default function CowsScreen() {
 
     const fetchCows = async () => {
         try {
-            const { data, error } = await supabase
-                .from('cows')
-                .select('*')
-                .order('created_at', { ascending: false });
-            if (error) throw error;
+            const { data: { user } } = await supabase.auth.getUser();
+            let query = supabase.from('cows').select('*').order('created_at', { ascending: false });
+            if (user) {
+                query = query.eq('user_id', user.id);
+            }
+            let { data, error } = await query;
+            if (error) {
+                // Robust fallback if user_id column does not exist in the database table yet
+                if (error.message && error.message.includes('column "user_id" does not exist')) {
+                    const fallback = await supabase
+                        .from('cows')
+                        .select('*')
+                        .order('created_at', { ascending: false });
+                    data = fallback.data;
+                    if (fallback.error) throw fallback.error;
+                } else {
+                    throw error;
+                }
+            }
             const mapped = (data || []).map(c => ({
                 _id: c.id,
                 name: c.name,
@@ -92,40 +106,70 @@ export default function CowsScreen() {
     const checkMatingNotifications = async (cowList) => {
         try {
             const readyCows = [];
-            const calvingAlerts = [];
             const today = new Date();
+            const { triggerMatingNotification, scheduleDailyMilkReminderNotifications } = require('../lib/firebase');
+            const Notifications = require('expo-notifications');
+            
+            // Schedule morning and evening milk entry reminders
+            await scheduleDailyMilkReminderNotifications();
 
-            cowList.forEach(cow => {
+            // Cancel any scheduled future calving alerts to rebuild them cleanly
+            if (Platform.OS !== 'web') {
+                const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+                for (const notification of scheduled) {
+                    if (notification.content.title?.includes("Calving Alert")) {
+                        await Notifications.cancelScheduledNotificationAsync(notification.identifier);
+                    }
+                }
+            }
+
+            for (const cow of cowList) {
                 if (!cow.isPregnant) {
+                    // Only non-pregnant mature cows trigger a mating alert
                     if (cow.calvedCount === 0 && cow.age >= 1.5) {
                         readyCows.push(cow.name);
                     } else if (cow.calvedCount > 0) {
                         readyCows.push(cow.name);
                     }
                 } else if (cow.isPregnant && cow.matingDate) {
-                    const mating = new Date(cow.matingDate);
-                    const diffTime = Math.abs(today - mating);
-                    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-                    if (diffDays >= 265 && diffDays <= 275) {
-                        calvingAlerts.push(cow.name);
+                    // Schedule future-dated calving notification (fires natively even if app is closed!)
+                    if (Platform.OS !== 'web') {
+                        const mating = new Date(cow.matingDate);
+                        const targetCalvingDate = new Date(mating.getTime() + 265 * 24 * 60 * 60 * 1000);
+                        
+                        if (targetCalvingDate > today) {
+                            await Notifications.scheduleNotificationAsync({
+                                content: {
+                                    title: 'Calving Alert 🐮🍼',
+                                    body: `HI MOMMY I AM COMMING OUT (From ${cow.name.toUpperCase()})`,
+                                    sound: true,
+                                },
+                                trigger: {
+                                    date: targetCalvingDate,
+                                },
+                            });
+                        } else {
+                            // If currently within the delivery window, trigger immediately
+                            const diffTime = Math.abs(today - mating);
+                            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                            if (diffDays >= 265 && diffDays <= 275) {
+                                await Notifications.scheduleNotificationAsync({
+                                    content: {
+                                        title: 'Calving Alert 🐮🍼',
+                                        body: `HI MOMMY I AM COMMING OUT (From ${cow.name.toUpperCase()})`,
+                                        sound: true,
+                                    },
+                                    trigger: null,
+                                });
+                            }
+                        }
                     }
                 }
-            });
-
-            const { triggerMatingNotification, scheduleDailyMilkReminderNotifications, triggerCalvingNotification } = require('../lib/firebase');
-            
-            // Schedule 6:00 AM & 6:00 PM milk logging reminders
-            await scheduleDailyMilkReminderNotifications();
+            }
 
             if (readyCows.length > 0) {
                 for (const name of readyCows) {
                     await triggerMatingNotification(name);
-                }
-            }
-
-            if (calvingAlerts.length > 0) {
-                for (const name of calvingAlerts) {
-                    await triggerCalvingNotification(name);
                 }
             }
         } catch (err) {
@@ -135,12 +179,26 @@ export default function CowsScreen() {
 
     const fetchCalves = async () => {
         try {
-            const { data, error } = await supabase
-                .from('calves')
-                .select('*, cows(name)')
-                .eq('transitioned', false)
-                .order('created_at', { ascending: false });
-            if (error) throw error;
+            const { data: { user } } = await supabase.auth.getUser();
+            let query = supabase.from('calves').select('*, cows(name)').eq('transitioned', false).order('created_at', { ascending: false });
+            if (user) {
+                query = query.eq('user_id', user.id);
+            }
+            let { data, error } = await query;
+            if (error) {
+                // Robust fallback if user_id column does not exist in the database table yet
+                if (error.message && error.message.includes('column "user_id" does not exist')) {
+                    const fallback = await supabase
+                        .from('calves')
+                        .select('*, cows(name)')
+                        .eq('transitioned', false)
+                        .order('created_at', { ascending: false });
+                    data = fallback.data;
+                    if (fallback.error) throw fallback.error;
+                } else {
+                    throw error;
+                }
+            }
             const mapped = (data || []).map(c => ({
                 _id: c.id,
                 name: c.name,
@@ -319,14 +377,19 @@ export default function CowsScreen() {
             return;
         }
         try {
-            const { error } = await supabase.from('calves').insert([{
+            const { data: { user } } = await supabase.auth.getUser();
+            const insertData = {
                 name: finalName,
                 dob: new Date(calfDob).toISOString(),
                 status: calfStatus,
                 gender: calfGender,
                 parent_cow_id: calfParentId || null,
                 transitioned: false
-            }]);
+            };
+            if (user) {
+                insertData.user_id = user.id;
+            }
+            const { error } = await supabase.from('calves').insert([insertData]);
             if (error) throw error;
             resetCalfForm();
             fetchCalves();
@@ -421,7 +484,8 @@ export default function CowsScreen() {
             return;
         }
         try {
-            const { error } = await supabase.from('cows').insert([{
+            const { data: { user } } = await supabase.auth.getUser();
+            const insertData = {
                 name: name.trim(),
                 age: Number(age),
                 calved_count: calvedCount ? Number(calvedCount) : 0,
@@ -432,7 +496,11 @@ export default function CowsScreen() {
                 buying_date: buyingDate ? new Date(buyingDate).toISOString() : null,
                 cost: Number(cost),
                 image_url: imageUri || null,
-            }]);
+            };
+            if (user) {
+                insertData.user_id = user.id;
+            }
+            const { error } = await supabase.from('cows').insert([insertData]);
             if (error) throw error;
             resetForm();
             fetchCows();
