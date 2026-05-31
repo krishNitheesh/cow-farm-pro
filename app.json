@@ -17,6 +17,7 @@
     },
     "android": {
       "package": "com.cowfarm.management",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#26170d",
         "foregroundImage": "./assets/krishna_logo.png"
