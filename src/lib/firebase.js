@@ -77,7 +77,7 @@ export async function triggerCalvingNotification(cowName) {
   }
 }
 
-// Function to schedule daily milk record entry notifications
+// Function to schedule daily milk record entry notifications at multiple morning and evening times
 export async function scheduleDailyMilkReminderNotifications() {
   if (Platform.OS === 'web') return;
 
@@ -90,33 +90,36 @@ export async function scheduleDailyMilkReminderNotifications() {
       }
     }
 
-    // 6:00 AM daily
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "ENTER TODAY'S MILK RECORDS 🥛🥛🥛",
-        body: 'Morning session is active! Log today\'s production details.',
-        sound: true,
-      },
-      trigger: {
-        hour: 6,
-        minute: 0,
-        repeats: true,
-      },
-    });
+    const times = [
+      // Morning slots (6:00 AM, 6:15 AM, 6:20 AM, 6:30 AM, 7:00 AM)
+      { hour: 6, minute: 0, session: 'Morning' },
+      { hour: 6, minute: 15, session: 'Morning' },
+      { hour: 6, minute: 20, session: 'Morning' },
+      { hour: 6, minute: 30, session: 'Morning' },
+      { hour: 7, minute: 0, session: 'Morning' },
 
-    // 6:00 PM daily
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "ENTER TODAY'S MILK RECORDS 🥛🥛🥛",
-        body: 'Evening session is active! Log today\'s production details.',
-        sound: true,
-      },
-      trigger: {
-        hour: 18,
-        minute: 0,
-        repeats: true,
-      },
-    });
+      // Evening slots (6:00 PM, 6:15 PM, 6:20 PM, 6:30 PM, 7:00 PM)
+      { hour: 18, minute: 0, session: 'Evening' },
+      { hour: 18, minute: 15, session: 'Evening' },
+      { hour: 18, minute: 20, session: 'Evening' },
+      { hour: 18, minute: 30, session: 'Evening' },
+      { hour: 19, minute: 0, session: 'Evening' },
+    ];
+
+    for (const time of times) {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "ENTER TODAY'S MILK RECORDS 🥛🥛🥛",
+          body: `${time.session} session is active! Log today's production details.`,
+          sound: true,
+        },
+        trigger: {
+          hour: time.hour,
+          minute: time.minute,
+          repeats: true,
+        },
+      });
+    }
 
     console.log('Daily milk reminder notifications scheduled successfully!');
   } catch (error) {
