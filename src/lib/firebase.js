@@ -31,7 +31,7 @@ export async function registerForPushNotificationsAsync() {
     }
     
     // Get the Expo Push Token (which routes through FCM under the hood for Android)
-    token = (await Notifications.getExpoPushTokenAsync()).data;
+    token = (await Notifications.getExpoPushTokenAsync({ projectId: '327fe42e-474f-4a3a-a482-6b535e4d282d' })).data;
     console.log('FCM / Expo Push Token:', token);
 
     // Save token to AsyncStorage or database for this device
