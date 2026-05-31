@@ -23,6 +23,20 @@ export default function CowsScreen() {
     const [isModalVisible, setModalVisible] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
 
+    // Active tab and calves state
+    const [activeTab, setActiveTab] = useState('cows'); // 'cows' or 'calves'
+    const [calves, setCalves] = useState([]);
+
+    // Calf Form State
+    const [calfName, setCalfName] = useState('');
+    const [calfDob, setCalfDob] = useState('');
+    const [calfStatus, setCalfStatus] = useState('alive'); // 'alive', 'dead'
+    const [calfGender, setCalfGender] = useState('female'); // 'female', 'male'
+    const [calfParentId, setCalfParentId] = useState('');
+    const [isCalfModalVisible, setCalfModalVisible] = useState(false);
+    const [isCalfEditMode, setIsCalfEditMode] = useState(false);
+    const [editCalfId, setEditCalfId] = useState(null);
+
     // Search & Filter State
     const [searchQuery, setSearchQuery] = useState('');
     const [filterAge, setFilterAge] = useState('');
@@ -69,14 +83,122 @@ export default function CowsScreen() {
                 date: c.created_at,
             }));
             setCows(mapped);
+            checkMatingNotifications(mapped);
         } catch (err) {
             console.log('Error fetching cow book:', err.message);
+        }
+    };
+
+    const checkMatingNotifications = async (cowList) => {
+        try {
+            const readyCows = [];
+            const calvingAlerts = [];
+            const today = new Date();
+
+            cowList.forEach(cow => {
+                if (!cow.isPregnant) {
+                    if (cow.calvedCount === 0 && cow.age >= 1.5) {
+                        readyCows.push(cow.name);
+                    } else if (cow.calvedCount > 0) {
+                        readyCows.push(cow.name);
+                    }
+                } else if (cow.isPregnant && cow.matingDate) {
+                    const mating = new Date(cow.matingDate);
+                    const diffTime = Math.abs(today - mating);
+                    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                    if (diffDays >= 265 && diffDays <= 275) {
+                        calvingAlerts.push(cow.name);
+                    }
+                }
+            });
+
+            const { triggerMatingNotification, scheduleDailyMilkReminderNotifications, triggerCalvingNotification } = require('../lib/firebase');
+            
+            // Schedule 6:00 AM & 6:00 PM milk logging reminders
+            await scheduleDailyMilkReminderNotifications();
+
+            if (readyCows.length > 0) {
+                for (const name of readyCows) {
+                    await triggerMatingNotification(name);
+                }
+            }
+
+            if (calvingAlerts.length > 0) {
+                for (const name of calvingAlerts) {
+                    await triggerCalvingNotification(name);
+                }
+            }
+        } catch (err) {
+            console.log('Push notification error:', err);
+        }
+    };
+
+    const fetchCalves = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('calves')
+                .select('*, cows(name)')
+                .eq('transitioned', false)
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            const mapped = (data || []).map(c => ({
+                _id: c.id,
+                name: c.name,
+                dob: c.dob,
+                status: c.status,
+                gender: c.gender,
+                parentCowId: c.parent_cow_id,
+                parentCowName: c.cows?.name || 'Unknown',
+                date: c.created_at
+            }));
+            setCalves(mapped);
+
+            // Auto-promotion Check
+            const today = new Date();
+            const promotedList = [];
+            for (const calf of mapped) {
+                if (calf.status === 'alive') {
+                    const birth = new Date(calf.dob);
+                    const diffTime = Math.abs(today - birth);
+                    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                    if (diffDays >= 730) {
+                        promotedList.push(calf);
+                    }
+                }
+            }
+
+            if (promotedList.length > 0) {
+                for (const calf of promotedList) {
+                    // Promote to Cows
+                    const { error: promoError } = await supabase.from('cows').insert([{
+                        name: calf.name,
+                        age: 2,
+                        calved_count: 0,
+                        is_pregnant: false,
+                        cost: 0,
+                        buying_date: new Date().toISOString()
+                    }]);
+                    if (promoError) throw promoError;
+
+                    // Mark transitioned
+                    await supabase.from('calves').update({ transitioned: true }).eq('id', calf._id);
+                }
+                Alert.alert(
+                    'Calf Promotion 🎉',
+                    `${promotedList.map(c => c.name).join(', ')} reached 730 days of age and was automatically promoted to the Cows Registry!`
+                );
+                fetchCows();
+                fetchCalves();
+            }
+        } catch (err) {
+            console.log('Error fetching calves:', err.message);
         }
     };
 
     useFocusEffect(
         useCallback(() => {
             fetchCows();
+            fetchCalves();
         }, [])
     );
 
@@ -147,7 +269,7 @@ export default function CowsScreen() {
 
     const onRefresh = useCallback(() => {
         setRefreshing(true);
-        fetchCows().finally(() => setRefreshing(false));
+        Promise.all([fetchCows(), fetchCalves()]).finally(() => setRefreshing(false));
     }, []);
 
     const resetForm = () => {
@@ -166,6 +288,94 @@ export default function CowsScreen() {
         setIsEditMode(false);
         setEditCowId(null);
         setModalVisible(false);
+    };
+
+    const resetCalfForm = () => {
+        setCalfName('');
+        setCalfDob('');
+        setCalfStatus('alive');
+        setCalfGender('female');
+        setCalfParentId('');
+        setIsCalfEditMode(false);
+        setEditCalfId(null);
+        setCalfModalVisible(false);
+    };
+
+    const openEditCalfModal = (item) => {
+        setIsCalfEditMode(true);
+        setEditCalfId(item._id);
+        setCalfName(item.name || '');
+        setCalfDob(item.dob ? new Date(item.dob).toISOString().split('T')[0] : '');
+        setCalfStatus(item.status || 'alive');
+        setCalfGender(item.gender || 'female');
+        setCalfParentId(item.parentCowId || '');
+        setCalfModalVisible(true);
+    };
+
+    const handleAddCalf = async () => {
+        const finalName = calfName.trim() || `Calf ${calves.length + 1}`;
+        if (!calfDob) {
+            Alert.alert('Missing fields', 'Please enter a Date of Birth.');
+            return;
+        }
+        try {
+            const { error } = await supabase.from('calves').insert([{
+                name: finalName,
+                dob: new Date(calfDob).toISOString(),
+                status: calfStatus,
+                gender: calfGender,
+                parent_cow_id: calfParentId || null,
+                transitioned: false
+            }]);
+            if (error) throw error;
+            resetCalfForm();
+            fetchCalves();
+        } catch (err) {
+            Alert.alert('Error', 'Failed to add calf record.');
+        }
+    };
+
+    const handleUpdateCalf = async () => {
+        if (!editCalfId) return;
+        if (!calfDob) {
+            Alert.alert('Missing fields', 'Please enter a Date of Birth.');
+            return;
+        }
+        try {
+            const { error } = await supabase.from('calves').update({
+                name: calfName.trim(),
+                dob: new Date(calfDob).toISOString(),
+                status: calfStatus,
+                gender: calfGender,
+                parent_cow_id: calfParentId || null
+            }).eq('id', editCalfId);
+            if (error) throw error;
+            resetCalfForm();
+            fetchCalves();
+        } catch (err) {
+            Alert.alert('Error', 'Failed to update calf record.');
+        }
+    };
+
+    const handleDeleteCalf = (id) => {
+        const performDelete = async () => {
+            try {
+                const { error } = await supabase.from('calves').delete().eq('id', id);
+                if (error) throw error;
+                fetchCalves();
+            } catch (err) {
+                Alert.alert('Error', 'Failed to delete calf record.');
+            }
+        };
+
+        if (Platform.OS === 'web') {
+            if (window.confirm('Delete this calf?')) performDelete();
+        } else {
+            Alert.alert('Remove Record', 'Confirm removal of this calf?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Delete', style: 'destructive', onPress: performDelete }
+            ]);
+        }
     };
 
     const pickImageFromGallery = async () => {
@@ -482,6 +692,58 @@ export default function CowsScreen() {
         );
     };
 
+    const renderCalf = ({ item }) => {
+        const isDead = item.status === 'dead';
+        const birthDate = new Date(item.dob);
+        const today = new Date();
+        const ageDays = Math.max(0, Math.floor((today - birthDate) / (1000 * 60 * 60 * 24)));
+
+        return (
+            <View style={[styles.recordCard, isDead && { opacity: 0.5, borderColor: '#ef4444' }]}>
+                <View style={styles.cardHeader}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <View style={[styles.iconThumb, { backgroundColor: isDead ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)' }]}>
+                            <BookOpen size={16} color={isDead ? '#ef4444' : '#10b981'} />
+                        </View>
+                        <Text style={[styles.cowName, isDead && { color: '#8a7c6f', textDecorationLine: 'line-through' }]} numberOfLines={1}>{item.name}</Text>
+                        <View style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, backgroundColor: isDead ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.1)', borderRadius: 6, borderWidth: 1, borderColor: isDead ? '#ef4444' : '#10b981' }}>
+                            <Text style={{ color: isDead ? '#ef4444' : '#10b981', fontSize: 9, fontWeight: '800' }}>{item.status.toUpperCase()}</Text>
+                        </View>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <TouchableOpacity onPress={() => openEditCalfModal(item)} style={styles.actionBtn}>
+                            <Edit size={17} color="#bba284" />
+                        </TouchableOpacity>
+                        {!isDead && (
+                            <TouchableOpacity onPress={() => handleDeleteCalf(item._id)} style={styles.actionBtn}>
+                                <Trash2 size={17} color="#ef4444" />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                </View>
+
+                <View style={styles.statsRow}>
+                    <View style={styles.statCol}>
+                        <Text style={styles.statLabel}>AGE</Text>
+                        <Text style={styles.statValue}>{ageDays} days</Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statCol}>
+                        <Text style={styles.statLabel}>GENDER</Text>
+                        <Text style={[styles.statValue, { color: item.gender === 'female' ? '#f472b6' : '#60a5fa' }]}>
+                            {item.gender.toUpperCase()}
+                        </Text>
+                    </View>
+                    <View style={styles.statDivider} />
+                    <View style={styles.statCol}>
+                        <Text style={styles.statLabel}>MOTHER COW</Text>
+                        <Text style={styles.statValue} numberOfLines={1}>{item.parentCowName}</Text>
+                    </View>
+                </View>
+            </View>
+        );
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
@@ -541,24 +803,48 @@ export default function CowsScreen() {
                 </ScrollView>
             </View>
 
+            {/* Active Tab Switcher */}
+            <View style={styles.tabContainer}>
+                <TouchableOpacity 
+                    style={[styles.tabButton, activeTab === 'cows' && styles.tabButtonActive]}
+                    onPress={() => setActiveTab('cows')}
+                >
+                    <Text style={[styles.tabButtonText, activeTab === 'cows' && styles.tabButtonTextActive]}>Cows ({filteredCows.length})</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                    style={[styles.tabButton, activeTab === 'calves' && styles.tabButtonActive]}
+                    onPress={() => setActiveTab('calves')}
+                >
+                    <Text style={[styles.tabButtonText, activeTab === 'calves' && styles.tabButtonTextActive]}>Calves ({calves.length})</Text>
+                </TouchableOpacity>
+            </View>
+
             <TouchableOpacity
                 style={styles.inlineAddBtn}
-                onPress={() => { resetForm(); setModalVisible(true); }}
+                onPress={() => {
+                    if (activeTab === 'cows') {
+                        resetForm(); 
+                        setModalVisible(true);
+                    } else {
+                        resetCalfForm();
+                        setCalfModalVisible(true);
+                    }
+                }}
             >
                 <Plus size={20} color="#26170d" />
-                <Text style={styles.inlineAddText}>Add New Cow</Text>
+                <Text style={styles.inlineAddText}>{activeTab === 'cows' ? 'Add New Cow' : 'Add New Calf'}</Text>
             </TouchableOpacity>
 
             <FlatList
-                key={flatListKey}
+                key={activeTab === 'cows' ? flatListKey : `calves-${numColumns}`}
                 numColumns={numColumns}
-                data={filteredCows}
+                data={activeTab === 'cows' ? filteredCows : calves}
                 keyExtractor={item => item._id}
-                renderItem={renderCow}
+                renderItem={activeTab === 'cows' ? renderCow : renderCalf}
                 columnWrapperStyle={numColumns > 1 ? { gap: 16 } : null}
                 contentContainerStyle={styles.list}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#bba284" />}
-                ListEmptyComponent={<Text style={styles.emptyText}>No cows match your search filters.</Text>}
+                ListEmptyComponent={<Text style={styles.emptyText}>{activeTab === 'cows' ? 'No cows match your search filters.' : 'No calves registered yet.'}</Text>}
             />
 
             <Modal visible={isModalVisible} animationType="slide" transparent>
@@ -695,6 +981,85 @@ export default function CowsScreen() {
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
+
+            {/* Custom Calf Add/Edit Modal */}
+            <Modal visible={isCalfModalVisible} animationType="slide" transparent>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalBg}>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeaderRow}>
+                            <Text style={styles.modalTitle}>{isCalfEditMode ? 'Edit Calf' : 'New Calf'}</Text>
+                            <TouchableOpacity onPress={resetCalfForm} style={styles.closeBtn}>
+                                <X size={24} color="#8a7c6f" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView showsVerticalScrollIndicator={false}>
+                            <Text style={styles.inputLabel}>Calf Name / ID</Text>
+                            <TextInput 
+                                style={styles.input} 
+                                value={calfName} 
+                                onChangeText={setCalfName} 
+                                placeholder={isCalfEditMode ? "Calf..." : `Calf ${calves.length + 1}...`} 
+                                placeholderTextColor="#8a7c6f" 
+                            />
+
+                            <View style={{ width: '100%', marginTop: 5 }}>
+                                <AppDatePicker 
+                                    label="Date of Birth" 
+                                    dateString={calfDob} 
+                                    onDateChange={setCalfDob} 
+                                    placeholder="Select Birth Date" 
+                                />
+                            </View>
+
+                            <Text style={styles.inputLabel}>Gender</Text>
+                            <View style={styles.toggleRow}>
+                                <TouchableOpacity style={[styles.toggleBtn, calfGender === 'female' && styles.toggleBtnActive]} onPress={() => setCalfGender('female')}>
+                                    <Text style={[styles.toggleBtnText, calfGender === 'female' && styles.toggleBtnTextActive]}>FEMALE (HEIFER)</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={[styles.toggleBtn, calfGender === 'male' && styles.toggleBtnActive]} onPress={() => setCalfGender('male')}>
+                                    <Text style={[styles.toggleBtnText, calfGender === 'male' && styles.toggleBtnTextActive]}>MALE (BULL)</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <Text style={styles.inputLabel}>Status</Text>
+                            <View style={styles.toggleRow}>
+                                <TouchableOpacity style={[styles.toggleBtn, calfStatus === 'alive' && styles.toggleBtnActive]} onPress={() => setCalfStatus('alive')}>
+                                    <Text style={[styles.toggleBtnText, calfStatus === 'alive' && styles.toggleBtnTextActive]}>ALIVE</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={[styles.toggleBtn, calfStatus === 'dead' && styles.toggleBtnActive]} onPress={() => setCalfStatus('dead')}>
+                                    <Text style={[styles.toggleBtnText, calfStatus === 'dead' && styles.toggleBtnTextActive]}>DECEASED</Text>
+                                </TouchableOpacity>
+                            </View>
+
+                            <Text style={styles.inputLabel}>Mother Cow</Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 5 }}>
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                    <TouchableOpacity 
+                                        style={[{ paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12, backgroundColor: '#382a20', borderWidth: 1, borderColor: '#4d3f34' }, !calfParentId && { backgroundColor: '#bba284', borderColor: '#bba284' }]}
+                                        onPress={() => setCalfParentId('')}
+                                    >
+                                        <Text style={[{ color: '#8a7c6f', fontSize: 13, fontWeight: '700' }, !calfParentId && { color: '#26170d' }]}>None</Text>
+                                    </TouchableOpacity>
+                                    {cows.map(cow => (
+                                        <TouchableOpacity 
+                                            key={cow._id}
+                                            style={[{ paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12, backgroundColor: '#382a20', borderWidth: 1, borderColor: '#4d3f34' }, calfParentId === cow._id && { backgroundColor: '#bba284', borderColor: '#bba284' }]}
+                                            onPress={() => setCalfParentId(cow._id)}
+                                        >
+                                            <Text style={[{ color: '#8a7c6f', fontSize: 13, fontWeight: '700' }, calfParentId === cow._id && { color: '#26170d' }]}>{cow.name}</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            </ScrollView>
+
+                            <TouchableOpacity style={styles.submitBtn} onPress={isCalfEditMode ? handleUpdateCalf : handleAddCalf}>
+                                <Text style={styles.submitBtnText}>{isCalfEditMode ? 'Update Calf Info' : 'Register Calf'}</Text>
+                            </TouchableOpacity>
+                        </ScrollView>
+                    </View>
+                </KeyboardAvoidingView>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -764,5 +1129,12 @@ const styles = StyleSheet.create({
     toggleBtnTextActive: { color: '#26170d' },
     matingDateContainer: { marginTop: 15 },
     submitBtn: { backgroundColor: '#bba284', padding: 20, borderRadius: 18, alignItems: 'center', marginTop: 30, marginBottom: 30 },
-    submitBtnText: { color: '#26170d', fontSize: 18, fontWeight: '800' }
+    submitBtnText: { color: '#26170d', fontSize: 18, fontWeight: '800' },
+    
+    // Tab Styles
+    tabContainer: { flexDirection: 'row', backgroundColor: '#382a20', marginHorizontal: 20, marginTop: 15, borderRadius: 14, padding: 4, borderWidth: 1, borderColor: '#4d3f34' },
+    tabButton: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 10 },
+    tabButtonActive: { backgroundColor: '#bba284' },
+    tabButtonText: { color: '#8a7c6f', fontSize: 14, fontWeight: '700' },
+    tabButtonTextActive: { color: '#26170d' }
 });

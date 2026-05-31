@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Modal, TextInput, Alert, RefreshControl, ScrollView, Platform, SafeAreaView, KeyboardAvoidingView } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { Wheat, Trash2, Plus, Calendar, X, Scale, IndianRupee } from 'lucide-react-native';
@@ -9,6 +10,8 @@ export default function FeedScreen() {
     const [feeds, setFeeds] = useState([]);
     const [isModalVisible, setModalVisible] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
+    const [isCategoryModalVisible, setCategoryModalVisible] = useState(false);
+    const [newCategoryName, setNewCategoryName] = useState('');
 
     // Form State
     const [feedType, setFeedType] = useState('Green Fodder');
@@ -38,6 +41,22 @@ export default function FeedScreen() {
                 };
             });
             setFeeds(mapped);
+
+            // Dynamically populate feed categories from existing records and storage so they persist
+            const stored = await AsyncStorage.getItem('customFeedCategories');
+            let baseCategories = ['Green Fodder', 'Dry Fodder', 'Concentrates', 'Supplements'];
+            if (stored !== null) {
+                baseCategories = JSON.parse(stored);
+            }
+            const uniqueCategories = new Set(baseCategories);
+            mapped.forEach(f => {
+                if (f.feedType) {
+                    uniqueCategories.add(f.feedType);
+                }
+            });
+            const merged = Array.from(uniqueCategories);
+            setFeedCategories(merged);
+            await AsyncStorage.setItem('customFeedCategories', JSON.stringify(merged));
         } catch (err) {
             console.error('Error fetching feeds:', err);
         }
@@ -83,37 +102,22 @@ export default function FeedScreen() {
     }, [categoryStocks]);
 
     const handleAddCategory = () => {
-        const performAdd = (newCat) => {
-            if (newCat && newCat.trim()) {
-                const trimmed = newCat.trim();
-                if (!feedCategories.includes(trimmed)) {
-                    setFeedCategories(prev => [...prev, trimmed]);
-                }
-                setFeedType(trimmed);
-            }
-        };
-
-        if (Platform.OS === 'web') {
-            const newCat = window.prompt('Enter new category name:');
-            performAdd(newCat);
-        } else {
-            Alert.prompt('New Category', 'Enter category name:', [
-                { text: 'Cancel', style: 'cancel' },
-                { text: 'Add', onPress: performAdd }
-            ]);
-        }
+        setNewCategoryName('');
+        setCategoryModalVisible(true);
     };
 
     const handleDeleteCategory = (cat) => {
-        const systemDefaults = ['Green Fodder', 'Dry Fodder', 'Concentrates', 'Supplements'];
-        if (systemDefaults.includes(cat)) {
-            Alert.alert('Default Category', 'Default categories cannot be deleted.');
-            return;
-        }
-        
-        const performDelete = () => {
-            setFeedCategories(prev => prev.filter(c => c !== cat));
-            setFeedType('Green Fodder');
+        const performDelete = async () => {
+            const updated = feedCategories.filter(c => c !== cat);
+            setFeedCategories(updated);
+            try {
+                await AsyncStorage.setItem('customFeedCategories', JSON.stringify(updated));
+            } catch (err) {
+                console.error('Error saving categories after deletion:', err);
+            }
+            if (feedType === cat) {
+                setFeedType(updated[0] || '');
+            }
         };
 
         if (Platform.OS === 'web') {
@@ -132,16 +136,31 @@ export default function FeedScreen() {
             return;
         }
 
+        const dateStr = date ? new Date(date).toISOString() : new Date().toISOString();
         const data = {
             type: `${feedType}|${unit}`,
             quantity: Number(quantity),
             cost: Number(cost),
-            date: date ? new Date(date).toISOString() : new Date().toISOString()
+            date: dateStr
         };
 
         try {
-            const { error } = await supabase.from('feeds').insert([data]);
-            if (error) throw error;
+            const { error: feedError } = await supabase.from('feeds').insert([data]);
+            if (feedError) throw feedError;
+
+            // Automatically add an expense transaction
+            const transactionData = {
+                type: 'expense',
+                amount: Number(cost),
+                category: 'Feed',
+                remarks: `Purchased ${quantity} ${unit} of ${feedType}`,
+                date: dateStr
+            };
+            const { error: txError } = await supabase.from('transactions').insert([transactionData]);
+            if (txError) {
+                console.error('Error adding associated transaction:', txError);
+            }
+
             closeModal();
             fetchFeeds();
         } catch (err) {
@@ -149,11 +168,26 @@ export default function FeedScreen() {
         }
     };
 
-    const handleDeleteFeed = (id) => {
+    const handleDeleteFeed = (item) => {
         const performDelete = async () => {
             try {
-                const { error } = await supabase.from('feeds').delete().eq('id', id);
-                if (error) throw error;
+                const { error: feedDeleteError } = await supabase.from('feeds').delete().eq('id', item._id);
+                if (feedDeleteError) throw feedDeleteError;
+
+                // Also try to find and delete the associated transaction
+                const remarksPattern = `Purchased ${item.quantity} ${item.unit} of ${item.feedType}`;
+                const { error: txDeleteError } = await supabase
+                    .from('transactions')
+                    .delete()
+                    .eq('type', 'expense')
+                    .eq('amount', item.cost)
+                    .eq('category', 'Feed')
+                    .eq('remarks', remarksPattern);
+
+                if (txDeleteError) {
+                    console.error('Error deleting associated transaction:', txDeleteError);
+                }
+
                 fetchFeeds();
             } catch (err) {
                 console.error(err);
@@ -211,7 +245,7 @@ export default function FeedScreen() {
             </View>
 
             <View style={styles.cardActions}>
-                <TouchableOpacity onPress={() => handleDeleteFeed(item._id)} style={styles.actionBtn}>
+                <TouchableOpacity onPress={() => handleDeleteFeed(item)} style={styles.actionBtn}>
                     <Trash2 size={16} color="#ef4444" />
                 </TouchableOpacity>
             </View>
@@ -284,22 +318,28 @@ export default function FeedScreen() {
                         <ScrollView showsVerticalScrollIndicator={false}>
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 8 }}>
                                 <Text style={{ fontSize: 13, color: '#8a7c6f', fontWeight: '600' }}>Feed Category</Text>
-                                {!['Green Fodder', 'Dry Fodder', 'Concentrates', 'Supplements'].includes(feedType) && (
-                                    <TouchableOpacity onPress={() => handleDeleteCategory(feedType)}>
-                                        <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: '700' }}>🗑️ Delete Category</Text>
-                                    </TouchableOpacity>
-                                )}
                             </View>
                             <View style={styles.categoryContainer}>
-                                {feedCategories.map(cat => (
-                                    <TouchableOpacity
-                                        key={cat}
-                                        style={[styles.categoryBtn, feedType === cat && styles.categoryBtnActive]}
-                                        onPress={() => setFeedType(cat)}
-                                    >
-                                        <Text style={[styles.categoryText, feedType === cat && styles.categoryTextActive]}>{cat}</Text>
-                                    </TouchableOpacity>
-                                ))}
+                                {feedCategories.map(cat => {
+                                    return (
+                                        <TouchableOpacity
+                                            key={cat}
+                                            style={[styles.categoryBtn, feedType === cat && styles.categoryBtnActive, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}
+                                            onPress={() => setFeedType(cat)}
+                                        >
+                                            <Text style={[styles.categoryText, feedType === cat && styles.categoryTextActive]}>{cat}</Text>
+                                            <TouchableOpacity 
+                                                onPress={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDeleteCategory(cat);
+                                                }}
+                                                style={{ marginLeft: 2, padding: 2 }}
+                                            >
+                                                <Text style={{ color: feedType === cat ? '#26170d' : '#ef4444', fontSize: 12, fontWeight: 'bold' }}>✕</Text>
+                                            </TouchableOpacity>
+                                        </TouchableOpacity>
+                                    );
+                                })}
                                 <TouchableOpacity
                                     style={[styles.categoryBtn, { borderStyle: 'dashed', backgroundColor: 'transparent', borderColor: '#bba284' }]}
                                     onPress={handleAddCategory}
@@ -369,6 +409,55 @@ export default function FeedScreen() {
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
+
+            <Modal visible={isCategoryModalVisible} animationType="fade" transparent={true}>
+                <View style={styles.promptOverlay}>
+                    <View style={styles.promptContent}>
+                        <Text style={styles.promptTitle}>New Category</Text>
+                        <Text style={styles.promptSubtitle}>Enter the name of the new feed category:</Text>
+                        <TextInput
+                            style={styles.promptInput}
+                            value={newCategoryName}
+                            onChangeText={setNewCategoryName}
+                            placeholder="e.g. Silage, Mineral Block"
+                            placeholderTextColor="#6a5c52"
+                            autoFocus={true}
+                        />
+                        <View style={styles.promptActions}>
+                            <TouchableOpacity 
+                                style={[styles.promptBtn, styles.promptBtnCancel]} 
+                                onPress={() => setCategoryModalVisible(false)}
+                            >
+                                <Text style={styles.promptBtnTextCancel}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={[styles.promptBtn, styles.promptBtnConfirm]} 
+                                onPress={async () => {
+                                    if (newCategoryName && newCategoryName.trim()) {
+                                        const trimmed = newCategoryName.trim();
+                                        let updated = feedCategories;
+                                        if (!feedCategories.includes(trimmed)) {
+                                            updated = [...feedCategories, trimmed];
+                                            setFeedCategories(updated);
+                                            try {
+                                                await AsyncStorage.setItem('customFeedCategories', JSON.stringify(updated));
+                                            } catch (err) {
+                                                console.error('Error saving new category:', err);
+                                            }
+                                        }
+                                        setFeedType(trimmed);
+                                        setCategoryModalVisible(false);
+                                    } else {
+                                        Alert.alert('Error', 'Please enter a valid category name');
+                                    }
+                                }}
+                            >
+                                <Text style={styles.promptBtnTextConfirm}>Add</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </SafeAreaView>
     );
 }
@@ -411,5 +500,16 @@ const styles = StyleSheet.create({
     saveBtnText: { color: '#26170d', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 },
     emptyContainer: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
     emptyText: { color: '#8a7c6f', fontSize: 18, fontWeight: '700', marginTop: 16 },
-    emptySubText: { color: '#6a5c52', fontSize: 14, textAlign: 'center', marginTop: 8 }
+    emptySubText: { color: '#6a5c52', fontSize: 14, textAlign: 'center', marginTop: 8 },
+    promptOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+    promptContent: { backgroundColor: '#382a20', borderRadius: 20, padding: 24, width: '100%', maxWidth: 340, borderWidth: 1, borderColor: '#4d3f34' },
+    promptTitle: { fontSize: 18, fontWeight: '800', color: '#e1dacb', marginBottom: 8 },
+    promptSubtitle: { fontSize: 13, color: '#8a7c6f', marginBottom: 16 },
+    promptInput: { backgroundColor: '#26170d', borderRadius: 12, borderWidth: 1, borderColor: '#4d3f34', paddingHorizontal: 16, height: 50, color: '#e1dacb', fontSize: 16, marginBottom: 20 },
+    promptActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+    promptBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 10, minWidth: 80, alignItems: 'center' },
+    promptBtnCancel: { backgroundColor: 'transparent' },
+    promptBtnConfirm: { backgroundColor: '#bba284' },
+    promptBtnTextCancel: { color: '#8a7c6f', fontWeight: '700' },
+    promptBtnTextConfirm: { color: '#26170d', fontWeight: '800' }
 });

@@ -1,9 +1,18 @@
-import React, { useContext } from 'react';
+import React, { useContext, useEffect } from 'react';
 import { View, ActivityIndicator, Platform } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import * as Notifications from 'expo-notifications';
 import { Home, List, Droplet, DollarSign, Crosshair, HeartPulse, BookOpen, Wheat } from 'lucide-react-native';
+
+export const navigationRef = createNavigationContainerRef();
+
+export function navigate(name, params) {
+    if (navigationRef.isReady()) {
+        navigationRef.navigate(name, params);
+    }
+}
 
 import { AuthContext } from '../context/AuthContext';
 import LoginScreen from '../screens/LoginScreen';
@@ -72,6 +81,18 @@ function MainTabs() {
 export default function AppNavigator() {
     const { userToken, isLoading } = useContext(AuthContext);
 
+    useEffect(() => {
+        const subscription = Notifications.addNotificationResponseReceivedListener(response => {
+            const title = response.notification.request.content.title || '';
+            if (title.includes("ENTER TODAY'S MILK RECORDS")) {
+                navigate('MainTabs', { screen: 'Milk' });
+            } else if (title.includes("Mating Alert") || title.includes("Calving Alert")) {
+                navigate('MainTabs', { screen: 'Cows' });
+            }
+        });
+        return () => subscription.remove();
+    }, []);
+
     if (isLoading) {
         return (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#26170d' }}>
@@ -81,7 +102,7 @@ export default function AppNavigator() {
     }
 
     return (
-        <NavigationContainer>
+        <NavigationContainer ref={navigationRef}>
             <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#26170d' } }}>
                 {userToken === null ? (
                     <Stack.Screen name="Login" component={LoginScreen} />

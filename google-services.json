@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "986286072136",
+    "project_id": "cow-farm-pro",
+    "storage_bucket": "cow-farm-pro.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:986286072136:android:1f454d5518afb7b375d37d",
+        "android_client_info": {
+          "package_name": "com.cowfarm.management"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCHtFu1GsyevNpY73xdczye7Bm1icZTcPk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
