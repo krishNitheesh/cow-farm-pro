@@ -34,7 +34,14 @@
     "plugins": [
       "expo-web-browser",
       "@react-native-community/datetimepicker",
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/krishna_logo.png",
+          "color": "#bba284"
+        }
+      ]
     ]
   }
 }
